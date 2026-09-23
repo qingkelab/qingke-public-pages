@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>青稞社区 · 公开文章</title>
+  <meta name="description" content="青稞社区公开发布的文章归档：论文深度解读与技术文章。">
+  <style>
+    :root {
+      --ink: #14161a;
+      --body: #3f4750;
+      --muted: #8a929b;
+      --line: #e2e6ea;
+      --accent: #1f6f54;
+      --bg: #ffffff;
+      --card: #f7f8f9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #f2f4f6;
+        --body: #c7ccd2;
+        --muted: #8a929b;
+        --line: #2b3038;
+        --accent: #6fbf9a;
+        --bg: #14161a;
+        --card: #1c1f24;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      padding: 32px 20px 64px;
+      background: var(--bg);
+      color: var(--body);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Heiti SC", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+      line-height: 1.75;
+    }
+    main { max-width: 720px; margin: 0 auto; }
+    header { padding-bottom: 20px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+    h1 { margin: 0 0 8px; font-size: 26px; line-height: 1.35; color: var(--ink); font-weight: 600; }
+    .tagline { margin: 0; color: var(--muted); font-size: 15px; }
+    h2 { margin: 0 0 16px; font-size: 15px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+    ul { list-style: none; margin: 0; padding: 0; }
+    li { margin: 0 0 12px; }
+    a.card {
+      display: block;
+      padding: 18px 20px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color .15s ease;
+    }
+    a.card:hover { border-color: var(--accent); }
+    a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .card-title { display: block; color: var(--ink); font-weight: 600; font-size: 17px; line-height: 1.5; }
+    .card-desc { display: block; margin-top: 8px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .card-meta { display: block; margin-top: 10px; color: var(--accent); font-size: 13px; }
+    .empty { color: var(--muted); font-size: 15px; }
+    footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    footer a { color: var(--accent); }
+    @media (max-width: 480px) {
+      body { padding: 24px 16px 48px; }
+      h1 { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>青稞社区 · 公开文章</h1>
+      <p class="tagline">论文深度解读与技术文章 · 公开发布归档</p>
+    </header>
+
+    <h2>文章</h2>
+    <ul>
+      <!-- articles -->
+    </ul>
+
+    <footer>
+      内容版权归 <a href="https://qingkeai.online" target="_blank" rel="noopener">青稞社区</a> 所有。
+    </footer>
+  </main>
+</body>
+</html>
