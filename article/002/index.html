@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>VISTA：让多模态模型学会回头看</title>
+</head>
+<body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
+<h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">VISTA：让多模态模型学会回头看</h1>
+<img alt="文章封面" src="https://qingkelab.github.io/qingke-public-pages/article/002/images/cover_notebook.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：看得见，却留不住</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">ARC-AGI-3 是一组规则不公开的交互小游戏。屏幕上会动，但没有人告诉你目标是什么，也没有人告诉你按下去会发生什么。官方实现把每一帧压成一张 64×64 的文本网格交给模型，配 Opus 5.0 跑完 25 个公开游戏，拿到 40.68 的相对人类动作效率（Relative Human Action Efficiency，RHAE）。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">RHAE 这个指标值得先解释一句：它把模型的动作数和「第一次玩这个游戏的人类」相比。动作数与人类持平可以拿满分，用的动作更少最多能拿到 115% 的分数，用得多则按比例扣；没通关的关卡不计分，后面的关卡权重更高，每局总分还被已通关卡的比例封顶。也就是说，40.68 这个数字的意思是：<strong>模型在大部分关卡上要么没通关，要么通关花的动作数远超一个刚上手的人</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">VISTA 这批作者（MIT，五位作者，含 Cathy Wu 与 Kaiming He）给的判断是：瓶颈可能不在「会不会看图」。模型能认出画面里的形状和颜色，问题出在<strong>它看过的画面留不住</strong>。这一帧里那个方块朝哪边、三个回合前地图长什么样、按下按钮后的那几帧动画里发生了什么——这些细节如果只存在于上下文的文字摘要里，等到真正需要的时候就没了。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">他们的做法不训新模型，而是给现成的多模态模型外挂一层<strong>视觉 harness</strong>：把环境返回的每一帧按原样存进一个可寻址的记忆，让模型自己决定什么时候回看、看哪一帧、放大哪一块。论文报告，加上这层 harness 之后，同一个 Opus 5.0 在同一批游戏上的 RHAE 从 40.68 变成 100.00。</p>
+<img alt="三种历史管理方式" src="https://qingkelab.github.io/qingke-public-pages/article/002/images/fig1_history_strategies.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 1：三种常见的历史管理方式与它们的代价——编码一次、之后只留文本轨迹；上下文满了用摘要替换；降采样或只看当前帧；以及 VISTA 的做法：原始帧留在外部记忆里，由模型按需取回与放大。横轴是按时间推进的交互回合，不是性能高低。图：青稞社区绘制。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">一、过去怎么做：观测编码一次，历史靠压缩</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">多模态系统处理长交互时，通常在三件事上省成本。第一，把图像编码成向量之后就把原图丢掉，上下文里只留文本形式的动作与观察记录。第二，上下文快满时用一段摘要替换早期内容，把位置腾给新的回合。第三，为了控制 token，把画面降采样，或者干脆只保留「当前这一帧」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这三件事单独看都合理，合在一起会撞上同一个问题：<strong>编码发生在信息被需要之前</strong>。模型在第一帧的时候并不知道第五帧会用到哪一条细节，于是它只能保存一个「当时看起来够用」的表示；等到发现需要某个细节时，那个细节可能已经不在上下文里了。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">举个具体一点的场景。一个棋盘类游戏中，玩家在第 5 回合推了一块石头，石头滑落时棋盘重置。到了第 27 回合，模型要判断「这块石头能不能再推一次」，它需要知道的是石头滑落之后棋盘变成了什么样——那是 22 个回合以前的画面。如果当时的帧已经被摘要成一句「玩家推动了红色方块」，这条信息就再也找不回来了。论文对这件事的说法是：一个表示在一个阶段足够，在后续推理里可能刚好缺了需要的那部分。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这里还有一种更隐蔽的损失。上下文里的内容不仅是「少了」，还是被<strong>有损地替换</strong>的：摘要由谁写、压缩掉哪一部分，通常由外部策略决定，模型自己在事后无法回头查证。VISTA 想拿回来的，正是这份「事后查证」的能力。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">为什么长期以来大家宁愿压缩也不愿保留？因为保留是贵的。把每一帧原图都塞进上下文，token 会以肉眼可见的速度爆炸；而把它挪到上下文之外、需要时再取回，代价就从「持续占用」变成「按需查询」——查询本身要花一次工具调用，也要把取回的图像临时放进上下文，但只要模型只在需要时才查，总账通常更便宜。VISTA 的整个设计可以看成这次成本转移的具体实现：<strong>把「一直带着」换成「需要时去取」</strong>。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">二、VISTA 换了哪一层：把记忆放到上下文外面</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">VISTA 把自己定义为 harness，并且强调它是<strong>纯机械的</strong>：不训练、不预测，只执行模型发出的调用、把图像或像素值回传，对非法请求报错。它由三个组件组成（图 2）。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>视觉观测</strong>：模型直接看环境渲染出来的图像，而不是被压成数字网格的文本。这一条保住了物体的外观与空间关系，让模型能用上预训练阶段学到的视觉先验。论文的做法是把官方 64×64 的帧用最近邻插值放大到 512 像素/边，再作为图像输入——这一步不引入新信息，只是让模型的视觉通路能正常处理它。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>无损视觉记忆</strong>：环境返回的每一帧都按原始形态存下来，包括一个动作触发的那几帧中间动画；每一帧按「回合 + 帧号」编号，可以随时被取回。这份记忆<strong>独立于模型的上下文</strong>存在——上下文写满、被压缩、被整个换掉，都不影响它。这里「无损」是定义性的：不压缩、不摘要、不降采样，保留的是原始画面本身。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>视觉检查</strong>：模型可以用工具主动查看这份记忆，方向有两个。空间上，它可以要求把任意矩形区域放大到全分辨率，去辨认完整画面里看不清的细节；时间上，它可以取回任意较早回合的多帧，比较状态、回看某个动作的中间过程。此外还有一个 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">read_pixels</code> 工具，用来读取指定区域的具体像素值——当一个游戏靠颜色区分物体、而颜色在缩略图里难以分辨时，这个工具能给出确定答案。论文把这套设计称为「模型对交互历史的显式注意力机制」：选择看哪几帧、哪块区域，权力在模型手里，而不在预处理流水线里。</p>
+<img alt="VISTA 的组件与单回合流程（论文原图）" src="https://qingkelab.github.io/qingke-public-pages/article/002/images/paper_designs.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 2：来源：作者，VISTA（arXiv:2610.02200），Fig. 3。(a) 视觉观测：文本网格与渲染图像的对比；(b) 无损视觉记忆：每一帧按回合与帧号保留；(c) 视觉检查：空间上放大任意区域，时间上取回任意较早回合的多帧；(d) 单回合流程：观察 → 推理 → 动作，其中只有 play 会消耗一次动作。图内英文为原文。</em></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">除此之外还有两个笔记文件：<code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">GUIDE.md</code> 记录跨关卡仍然有效的理解（例如已确认的游戏规则），<code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">WORKING.md</code> 是当前这一关的草稿纸。两者都由模型自己维护，也都可以随时改写——论文的措辞是「一个紧凑且可修订的游戏模型」。当上下文接近上限，模型写一份简短的交接摘要，然后在新的上下文里继续；笔记、视觉记忆与动作历史都还在，因此换上下文不等于从头开始。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">有一点需要说清楚：这套 harness 里没有学习成分，也没有替模型做决定的策略。它不预测哪个区域重要，不做检索排序，也不决定什么时候该回看——这些全部由模型在推理时用自然语言决定。它甚至不建世界模型：环境接下来会怎样，仍然靠模型自己推测。论文对 harness 的定位就是「机械执行 + 明确报错」，把智能留在模型那一侧。这个立场决定了它的优缺点：接口足够通用，能换环境、换模型；但它也给不了一个「比模型更聪明」的先验。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">为什么这套设计在游戏环境里特别顺？因为游戏的状态几乎完整地摆在画面上：棋盘、角色、血条、道具都在图里，帧与帧之间的差别就是世界的变化。加上游戏可以随时重置、动作空间小且离散，一份「按回合与帧号索引的帧集合」就近似等价于世界的全部历史。真实场景里这三条通常都不成立——机器人看不到身后，仓库里的状态有一部分在数据库里，帧与帧之间的差别未必等于物理变化——所以这套机制搬到别处时，第一件事是先回答「哪些证据是可见的、可重放的」。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">三、一个回合是怎么跑的</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">一个回合里，模型拿到当前画面与可用动作，用自然语言推理、预测动作的后果、更新笔记，最后调用 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">play</code> 执行一个动作，进入下一回合。中间它可以任意次调用检查工具，这些调用不消耗动作次数——<strong>只有 play 计费</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这一点值得单独说：论文里的动作上限按 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">play</code> 的次数算，而回看历史、放大细节、读像素都不占额度。于是「多看几眼」在协议上几乎是免费的，这与很多把工具调用也算作预算的设计不同。代价转移到另一处：每一次检查都会把图像塞进上下文，所以看得越多，上下文消耗越快——这正好与下一节要讲的分辨率取舍接在一起。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文特别强调一个回合内部可以有多次与 harness 的往返：模型可以先取回几帧，看完再决定动作；也可以先放大一个区域，发现不对，再换一个区域看。这种「想—看—再想」的循环，在只给模型一个固定观测的实现里很难出现。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">接口本身在环境之间也保持不变：论文说每个游戏用的都是同一套工具与同一段短提示，工具的定义、伪代码与说明直接写在提示里；非法请求（比如取一个不存在的帧号）会被 harness 报错返回，模型据此修正。这一点是它后来能几乎不改动就迁到另外三个 benchmark 的前提——换环境换的是「怎么截屏、动作怎么发」，不是「模型怎么想」。</p>
+<img alt="两个环境里的实际交互轨迹（论文原图）" src="https://qingkelab.github.io/qingke-public-pages/article/002/images/paper_trace.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 3：来源：作者，VISTA（arXiv:2610.02200），Fig. 2。左侧是 ARC-AGI-3，右侧是 GameWorld；每一次模型发言下面是它调用的工具，只有 play 推进游戏。可以看到模型在同一个回合里回看多帧、放大局部，再决定动作。图内英文为原文。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">四、成绩单与它成立的条件</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文在 ARC-AGI-3 的 25 个公开游戏上给出的结果如下（均为作者自报，交互协议由作者设定）：</p>
+<table style="width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.7;margin:0 0 18px;"><thead><tr><th style="border:1px solid #e2e6ea;padding:6px 8px;text-align:left;background:#f7f8f9;font-weight:600;">配置</th><th style="border:1px solid #e2e6ea;padding:6px 8px;text-align:left;background:#f7f8f9;font-weight:600;">路线</th><th style="border:1px solid #e2e6ea;padding:6px 8px;text-align:left;background:#f7f8f9;font-weight:600;">RHAE</th></tr></thead><tbody><tr><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">官方实现 + Opus 5.0</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">文本网格，最小 harness</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">40.68</td></tr><tr><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">官方实现 + GPT-5.6 Sol（max 档）</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">同上</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">13.33</td></tr><tr><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">VISTA + GPT-5.6 Sol（max 档）</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">视觉 harness，不做程序合成</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">99.00</td></tr><tr><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">VISTA + Opus 5.0（extra-high 档）</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;">同上</td><td style="border:1px solid #e2e6ea;padding:6px 8px;vertical-align:top;"><strong>100.00</strong></td></tr></tbody></table>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">Opus 5.0 这一档总共用了 7,302 次动作，比人类参考的 17,135 次少 57.4%——也就是说，它不只是通关了，还比第一次上手的人更省动作。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文同时强调了一件我认为更值得注意的事：<strong>这张表里达到或接近满分的系统不止一个</strong>。Schema（95.35 / 98.98）、ewma_sv_v1.6（98.97）、Retrodict（99.86）、Tycho（100.00）都是程序合成路线——把环境抽象成可执行的符号程序，再在探索中检查程序是否解释得通。VISTA 的位置是「不做程序合成也能做到」，而不是「唯一能做到」。作者把「首个不用程序合成达到满分或接近满分的系统」写进了正文，这是一个关于路线差异的陈述，不是关于谁更强的陈述。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">两条路线的假设不同，这比分数更值得留意。程序合成路线假设环境可以被写成一个可执行的规则系统：探索的过程就是不断提出程序、验证程序，最后用程序推导出该按什么。它的好处是结论可检查、可复用；代价是当环境里有大量难以形式化的连续感知细节（比如「这个方块朝哪边」）时，抽象本身就很脆。VISTA 走的是另一头：不做抽象，把原始画面留给模型，让它在需要时回去看。它省掉了建模这一步，换来的是对模型自身视觉能力的依赖——这正好解释了后面那个开源后端的成绩为什么明显更低。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">引用这些数字时要带上三个条件。第一，动作与时间上限被提高到每局 2,000 次动作、并设了自己的时间上限，与官方的停止条件不同。第二，上下文长度为 200K，思考档位取的是各家的高档之一（Opus 5.0 用 extra-high 档经 Claude Code CLI，GPT-5.6 Sol 用 max 档经 Codex CLI）。第三，对手系统的协议由各自设定，这张表是<strong>不同协议下的系统级汇总</strong>，不是同协议对照。把这三条摆出来之后，「100.00」这个数字的正确读法是：在这套协议下，VISTA 把一个原本只有 40.68 的模型拉到了人类首次游玩的水准之上。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">五、消融：六级配置的阶梯</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文用同一个模型（GPT-5.6 Sol，max 档，200K 上下文）逐级加配置，得到一条很清楚的阶梯：</p>
+<pre style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.7;background:#f7f8f9;border:1px solid #e2e6ea;border-radius:8px;padding:12px 14px;overflow-x:auto;margin:0 0 16px;">13.33   官方最小 harness + 文本网格（10,619 次动作）
+47.32   把文本网格换成 PNG 图像
+51.66   提高动作与时间上限
+65.82   连续会话，用模型自带的压缩跨过上下文上限
+70.05   加入 GUIDE.md 与 WORKING.md 两个笔记
+94.10   加入无损视觉记忆与模型自选检查
+99.00   加入像素读值（完成版）</pre>
+<img alt="六级配置的阶梯（数据来自论文 Figure 5）" src="https://qingkelab.github.io/qingke-public-pages/article/002/images/fig2_ablation_ladder.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 4：同一个模型、同一批游戏下逐级加配置的结果。数据来自论文 Figure 5；横轴是配置递增，不是与其它系统的排名。图：青稞社区绘制。</em></p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">读这条阶梯要小心两件事。一是它<strong>不是单变量消融</strong>：把文本网格换成图像这一步同时改变了 token 预算和观测形态；连续会话那一级换的是上下文管理方式。二是相邻两级之间的差值不能当成某个组件的净效应——比如「加入两个笔记」只加了 4.23 分，而「加入无损视觉记忆与检查」加了 24.05 分，但后者是在前五级都到位之后才加上的。我在 brief 里把这条判断记为 medium-strong：阶梯确实指向「记忆与检查是最大的一跳」，但它证明的不是某个组件单独值多少分。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">与之配套的还有两笔成本账。第一笔是观测表示：文本网格每帧约 4,000 token，而默认的 512 像素图像每帧约 308 个 image token；25 个游戏平均下来，每局 token 用量是 71.9M 对 30.7M，而两者的 RHAE 接近，动作数也只是略高。换言之，<strong>用图像看，能力差不多但便宜一半以上</strong>。第二笔是上下文：200K 时成绩最好，拉到 780K 每局要烧 105.7M token；反过来压到 100K，RHAE 只掉 0.4，token 差不多减半。对想复现的人来说，这两条合起来说明「更长的上下文」不是免费的进步。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">分辨率也有一个最优点。论文比较了每边 128、256、512、1,024 像素四档，分别约 20、77、308、1,229 个 image token：128 像素那一档明显退化（细节根本看不见），1,024 像素那一档没有额外收益还更贵（多出来的 image token 占掉上下文却没有帮助推理），默认的 512 像素是折中。这个结论和「无损视觉记忆」放在一起看不矛盾：<strong>输入可以降采样，但记忆里保留的是原帧</strong>，模型需要时能把任意区域放大回全分辨率。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">对做系统的人来说，这条阶梯还给了一个改进顺序：先把观测改成模型能看懂的形态（+34.0），再处理上下文管理（+14.2），最后加记忆与检查（+24.1）与像素读值（+4.9）。顺序反过来的收益我没有材料可以判断——论文只给了这个顺序。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">六、模型怎么用这份记忆：两个真实例子</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文给了两个定性案例，恰好对应「空间」和「时间」两个方向（图 5）。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>跨时间的重建</strong>：在一个棋盘类游戏里，玩家落子之后画面会重置。模型在一次 <code style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f2f4f6;padding:1px 5px;border-radius:4px;">inspect</code> 调用里取回之前 22 个回合中的四帧，把地图重新拼了出来——它当时需要知道「刚才这块石头落下去之后，地图变成什么样」。此时记忆里已经存了 1,472 帧，取哪四帧是模型自己的决定。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>局部细节的辨认</strong>：另一个场景里，模型把三个小方块分别放大（约 1.3 倍），看清每个方块哪一面带着紫色标记，从而确定朝向并按顺序处理。这一条在完整画面里几乎不可能判断：三个方块都很小，紫色标记的那一面朝向不同。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">论文把这两种行为合起来称为「重新注意」（re-attention）：一种是把历史里的视觉证据整合起来，另一种是按当前任务需要的粒度查看局部细节。它们共同的前提，是记忆里存的始终是原始帧——如果当初存的是压缩后的表示，放大之后看到的只会是模糊的插值。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这两个案例还透露出一件事：检索本身是有难度的。模型得知道自己「不记得什么」，才能提出对的查询——在第一个例子里，它要先意识到「当前画面看不出地图全貌」，才会想到回看；在第二个例子里，它要先怀疑「这三个方块的朝向可能有讲究」，才会去放大。换句话说，无损记忆解决了「能不能查」，而「该不该查、查什么」仍然是一道关于模型能力的题，这也与后面开源后端成绩更低的现象对得上。</p>
+<img alt="模型自选视觉记忆的两个例子（论文原图）" src="https://qingkelab.github.io/qingke-public-pages/article/002/images/paper_memory.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 5：来源：作者，VISTA（arXiv:2610.02200），Fig. 10。(a) 跨空间与时间：模型在一次 inspect 调用里取回前 22 个回合的四帧，重建地图；(b) 局部细节：放大三个小方块，确认各自哪一面带紫色标记。图内英文为原文。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">七、换模型、换渲染、换环境</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这套 harness 的收益显然依赖底座模型。论文给了两个端点：换成开源权重的 GLM-5.3 Flash 320B 之后，RHAE 是 66.93——仍然明显高于同一模型的官方最小 harness，但离 99–100 有明显距离；把同一批游戏渲染成 3D 之后，RHAE 84.12，用了 20,640 次动作（比 2D 下多出近两倍的交互）。作者在局限一节也写明：模型自身的能力仍然是成功的主要因素，harness 的作用是把已有能力引出来。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">跨环境的迁移是这篇论文另一处值得记的地方：同一套 harness 几乎不改动就用在另外三个 benchmark 上（图 6）。GameWorld 有 34 个浏览器游戏、170 个任务，分属街机、平台、解谜、跑酷、模拟五类，模型只拿到官方任务描述、可用操作与截图，通过键鼠动作直接操作；VISTA 的成功率与进度都优于官方基线，并超过公开的人类新手成绩。AI GameStore 的 10 个游戏上同样如此：它按官方协议把每个游戏的原始分数按「人类中位数 = 100」归一化，再取十个游戏归一化分数的几何平均，VISTA 也高于官方基线。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">第三个是静态的 BabyVision：一共 388 道题、22 个子类，模型只拿到一张静态图和一道问题，没有交互历史可用。它取的是其中两个视觉追踪子类——20 道迷宫题加 19 道连线题，合计 39 道——准确率从官方实现的 41.0% 提升到 63.2%。这最后一个结果说明，「自选看哪里」这件事即使没有时间维度也有用：在一张放大后才能看清的图里，能不能主动去看关键区域，本身就是能力的一部分。当然也要记住，这只是 39 道题的子集，不能代表整张卷子。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">3D 那一组结果也值得单独看：同一批游戏换成 3D 渲染之后，RHAE 掉到 84.12，交互次数涨到 20,640 次。论文的解释是这类渲染需要更多交互才能建立稳定的理解。我的读法是：这套 harness 的强项是「把已有的视觉理解用起来」，而 3D 渲染恰好削弱了模型的现成视觉先验，所以它需要更多试探——这与「开源后端成绩更低」是同一类现象的两个侧面。</p>
+<img alt="三个附加评测环境（论文原图）" src="https://qingkelab.github.io/qingke-public-pages/article/002/images/paper_envs.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><em>图 6：来源：作者，VISTA（arXiv:2610.02200），Fig. 11 上半部分。GameWorld（34 个游戏、170 个任务）、AI GameStore（10 个游戏）为交互环境，BabyVision 为静态视觉推理。图内英文为原文。</em></p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">八、它还没有证明什么</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>没有证明这是唯一路径，也没有给出同协议对照。</strong> 同一张表里，程序合成路线的 Schema、Retrodict、Tycho 同样达到或接近满分。VISTA 的动作上限、上下文长度与停止条件都由作者设定，跨系统的数字只能当成「各自报告的结果」并列看。要判断两条路线谁更划算，需要的是同一协议下的对照实验。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>没有排除训练数据污染。</strong> 论文自己写明：所用模型的发布时间晚于这些公开 benchmark，无法断定模型没见过这些游戏，因此建议用 ARC-AGI-3 的私有集做更强的检验。这条限制由作者主动提出，我认为应该原样保留在读者的记忆里——它同时也是所有「在公开游戏上刷到满分」的系统共同面对的问题。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>没有证明弱模型也能被拉起来。</strong> 开源后端只给了一个点（66.93），没有给出「模型能力—harness 增益」的曲线，也没有说明这一档为什么比闭源后端低这么多。从我读到的材料看，比较稳妥的说法是：harness 能把「看得懂但记不住」的模型推上去，而不能把「看不懂」的模型推上去。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>没有做记忆规模的消融。</strong> 论文报告了已存帧数的量级（例如 1,472 帧），但没有系统扫描记忆大小对行为的影响，也没有把「不压缩」与「有损压缩加摘要」这两条路线放在同一协议下对照——而这恰恰是这套设计最核心的取舍。对准备复现的人来说，这是最想看到的下一组实验。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>静态任务只测了子集。</strong> BabyVision 的 388 道题里只取了 39 道（两个视觉追踪子类），不能代表整张卷子。论文对这一点的处理是诚实的（写明了取了哪两个子类），但读者不应该把它读成「VISTA 在 BabyVision 上提升了 22 个百分点」。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>没有给出 harness 自身的成本账。</strong> 论文比较了两种观测表示的 token 用量，但没有把「检索调用带来的额外图像 token」「模型为决定看哪里而多写的推理」单独列出来。检查不占动作预算这一点已经在协议上说明，但工程上真正关心的是「一次通关总共花多少 token、多少时间」——论文给的是按局平均的 token 量，不是按成功的成本。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>没有系统报告失败的样子。</strong> 定性案例展示的都是记忆用对了的场景；模型会不会取错帧、放大错区域、或者被一张过期的画面误导，论文没有给出统计。对想复用这套思路的人来说，失败模式往往比成功案例更有信息量。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">九、青稞技术小结</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把这篇论文放回本系列读过的几条线里，它的位置很清楚：<strong>它改的不是模型，也不是动作层，而是观测与历史的存取接口</strong>。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">三件事值得记住。第一，把注意力从编码期挪到推理期：不是让模型一开始就决定什么重要，而是让它事后能回去看。第二，视觉观测的第一价值是成本——在与文本网格成绩接近的前提下，每局 token 少一半以上；分辨率还有一个明确的折中点，而记忆里保留原帧让「输入降采样」变得可以接受。第三，这套接口的收益随模型能力变化：闭源后端能到 99–100，开源后端是 66.93，作者也把「模型能力是主因」写进了局限。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">还有一个容易被忽略的协议细节：检查动作不计入动作预算。这让「多看几眼」在评分上几乎免费，代价转移到上下文消耗上。如果换一个把工具调用也计入成本的评测协议，这套 harness 的性价比需要重新算一遍。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">如果要把这套思路用到自己的场景，我认为有三件事值得先检查。第一，环境是否稳定地返回「可回看」的原始观测：如果状态主要藏在传感器之外、或者画面本身噪声极大，那么记忆里存下来的东西价值有限。第二，动作是否有明确的代价：VISTA 把「看」与「做」分开计费，这个分离是它有效的前提之一，如果看和做一样贵，收益逻辑会变。第三，底座模型是否有「怀疑自己」的能力：检索的触发点来自模型意识到信息不足，这一点目前没有现成的指标可以事先判断，只能通过小规模试跑观察。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">至于能不能迁移到别的场景，我认为关键不在 harness 的代码，而在被交互的对象是否<strong>可回看</strong>：游戏画面按帧存下来很自然，而机器人操作里的视觉证据、力反馈与时序状态要怎么无损保存、按什么索引取回，是另一个问题——那不是这篇论文回答的。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">十、与本系列文章的关系</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">把 VISTA 和前面几篇放在一起看，差别在「谁拥有什么」：011 的 RPent 给机器人策略套 harness，改的是动作由谁组织；012 的 Agent as Policy 让 agent 直接持有下发动作的权限；014 的文本世界模型让 agent 先预测后果再行动。VISTA 不动动作层，也不建世界模型，它把力气全花在<strong>模型能看见什么、能回看什么</strong>上——每回合依旧只做一个游戏动作。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">这条线值得继续跟的原因也在这里：它提示了一个便宜的改进方向。当底座模型已经能看懂单帧画面时，或许不必急着换模型，先问一句「它能不能回头看」。</p>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">来源与图片出处</h2>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">选材口径：只收一手材料。本文事实来自 VISTA 技术报告（arXiv:2610.02200v1，CC BY 4.0）与官方项目页，全部链接在正文首次出现处给出。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;">引用纪律：所有成绩均为作者自报，正文逐处写明「论文报告」；ARC-AGI-3 的交互协议由作者设定，与官方实现及其它系统的协议不同，正文不做跨系统排名。判断部分以第一人称给出，不来自论文。</p>
+<p style="font-size:16px;line-height:1.8;margin:0 0 16px;"><strong>图片出处</strong>：图 1、4 与封面为青稞社区绘制（图 4 的数据取自论文 Figure 5）；图 2、3、5、6 复用论文原图，论文为 CC BY 4.0，图注逐张标注作者、arXiv ID 与图号。</p>
+</body>
+</html>
