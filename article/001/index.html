@@ -6,6 +6,7 @@
 </head>
 <body style="font-family:-apple-system,'PingFang SC','Heiti SC',sans-serif;color:#14161a;max-width:720px;margin:0 auto;padding:24px;background:#ffffff;">
 <h1 style="font-size:23px;font-weight:600;line-height:1.4;margin:0 0 22px;">DeepSeek 论文编年史：一条被反复重算的成本曲线</h1>
+<img alt="文章封面" src="https://qingkelab.github.io/qingke-public-pages/article/001/images/cover_notebook.png" style="max-width:100%;height:auto;display:block;margin:0 auto;" />
 <h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:30px 0 14px;">开场：同一笔账的两次报价</h2>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">2024 年 5 月，<a href="https://arxiv.org/abs/2405.04434" target="_blank" rel="noopener">DeepSeek-V2</a> 的技术报告里出现了一组不太像论文的数字。相对同门的 DeepSeek 67B 稠密模型，它的训练成本省下 42.5%，KV cache 减少 93.3%，最大生成吞吐提升到 5.76 倍。</p>
 <p style="font-size:16px;line-height:1.8;margin:0 0 16px;">三个数字指向三笔不同的账。训练成本是卡时，KV cache 是每个 token 要在显存里占住的字节，生成吞吐是一秒钟能吐多少 token。三笔账的优化方向并不一致：让缓存变小可能拖慢计算，让计算变稀疏可能让通信变贵，把参数摊到更多专家身上又会带来负载不均。</p>
